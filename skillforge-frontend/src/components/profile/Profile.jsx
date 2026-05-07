@@ -151,10 +151,16 @@ const Profile = () => {
 
     const fetchCompletedCourses = async () => {
         try {
-            // Need user.id, if not available in redux immediately, we might rely on profile fetch. 
-            // Better to wait for user to be loaded. But assuming user is present from redux state auth.
-            if (user?.id) {
-                const enrollments = await enrollmentService.getStudentEnrollments(user.id);
+            // Sync enrollments with progress data first to ensure completion status is up-to-date
+            if (user?.studentId) {
+                try {
+                    await api.put(`/enrollments/student/${user.studentId}/sync`);
+                } catch (syncErr) {
+                    // Silently fail sync - proceed with fetching
+                    console.debug("Enrollment sync skipped", syncErr);
+                }
+                
+                const enrollments = await enrollmentService.getStudentEnrollments(user.studentId);
                 // Filter completed
                 const completed = enrollments.filter(e => e.isCompleted || e.completionPercentage === 100);
                 // Sort by latest completed
@@ -168,14 +174,11 @@ const Profile = () => {
 
     const downloadCertificate = async (courseId) => {
         try {
-            // 1. Generate/Get DTO
-            const res = await api.post(`/certificates/generate/${courseId}?studentId=${user.id}`);
+            // 1. Generate/Get DTO (use studentId, not user id)
+            const res = await api.post(`/certificates/generate/${courseId}?studentId=${user.studentId}`);
             const { uid } = res.data;
 
             // 2. Download PDF
-            // We can redirect to download url or fetch blob
-            const downloadUrl = `${api.defaults.baseURL}/certificates/download/${uid}`; // Direct link might need auth if not using cookie
-
             // Using blob approach to handle auth headers if needed
             const pdfRes = await api.get(`/certificates/download/${uid}`, { responseType: 'blob' });
 
@@ -191,7 +194,8 @@ const Profile = () => {
 
         } catch (error) {
             console.error("Certificate download failed", error);
-            toast.error("Failed to download certificate. Please try again.");
+            const errorMessage = error.response?.data?.message || "Failed to download certificate. Please try again.";
+            toast.error(errorMessage);
         }
     };
 
